@@ -13,7 +13,7 @@ import logging
 import pandas as pd
 import seaborn as sns
 
-TAXONOMIC_LEVELS = [
+TAXLEVELS = [
     "Kingdom", 
     "Phylum", 
     "Class", 
@@ -38,7 +38,7 @@ def parse_args():
             help="Overwrite output file if it already exists [%(default)s].")
     parser.add_argument("-l", "--level", 
             default="Species",
-            choices=TAXONOMIC_LEVELS,
+            choices=TAXLEVELS,
             help="Taxonomic level to summarize results for [%(default)s].")
     parser.add_argument("-t", "--topN", metavar="N",
             default=50,
@@ -50,7 +50,7 @@ def parse_args():
                  "autocompute a pseudocount as the median of the 0.01th "
                  "quantile across all samples [%(default)s].")
     parser.add_argument("-c", "--colormap",
-            default="PuBu",
+            default="viridis",
             help="Matplotlib colormap to use [%(default)s].")
     parser.add_argument("-M", "--method",
             default="average",
@@ -96,17 +96,11 @@ def parse_mpa_table(mpa_tsv):
 
     logger.debug(df.head())
 
-    global TAXONOMIC_LEVELS  # ouf...
-    try:
-        df[TAXONOMIC_LEVELS] = df[dropcols[0]]\
-                .str.split("|", expand=True)\
-                .rename(columns={key: level for key, level in zip(range(len(TAXONOMIC_LEVELS)), TAXONOMIC_LEVELS)})
-    except ValueError:  # This happens if there are no assignments at the lowest level(s)
-        TAXONOMIC_LEVELS = TAXONOMIC_LEVELS[:-1]  # This fix only works if Strain is missing
-        df[TAXONOMIC_LEVELS] = df[dropcols[0]]\
-                .str.split("|", expand=True)\
-                .rename(columns={key: level for key, level in zip(range(len(TAXONOMIC_LEVELS)), TAXONOMIC_LEVELS)})
-    mpa_table = df.drop(columns=dropcols).set_index(TAXONOMIC_LEVELS)
+    lineages = df[dropcols[0]].str.split("|", expand=True)
+    levels_present = TAXLEVELS[:len(lineages.columns)]  # Some tables don't have strain or species assignments
+    df[levels_present] = lineages\
+            .rename(columns={key: level for key, level in zip(range(len(levels_present)), levels_present)})
+    mpa_table = df.drop(columns=dropcols).set_index(levels_present)
 
     logger.debug(f"Parsed data dimensions: {mpa_table.shape}")
     logger.debug(mpa_table.sample(10))
@@ -117,18 +111,18 @@ def parse_mpa_table(mpa_tsv):
 def extract_specific_level(mpa_table, level):
     """Extract abundances for a specific taxonomic level."""
 
-    index = TAXONOMIC_LEVELS.index(level)
+    level_pos = mpa_table.index.names.index(level)
 
-    if index+1 == len(TAXONOMIC_LEVELS):
+    if level_pos+1 == len(mpa_table.index.names):
         level_only = ~mpa_table.index.get_level_values(level).isnull()
         mpa_level = mpa_table.loc[level_only]
     else:
         level_assigned = ~mpa_table.index.get_level_values(level).isnull()
-        next_level_assigned = ~mpa_table.index.get_level_values(TAXONOMIC_LEVELS[index+1]).isnull()
+        next_level_assigned = ~mpa_table.index.get_level_values(mpa_table.index.names[level_pos+1]).isnull()
         level_only = level_assigned & ~next_level_assigned  # AND NOT 
         mpa_level = mpa_table.loc[level_only]
 
-    ranks = TAXONOMIC_LEVELS.copy()
+    ranks = mpa_table.index.names.copy()
     ranks.remove(level)
     mpa_level.index = mpa_level.index.droplevel(ranks)
     logger.debug(f"Table dimensions after extracting {level}-level only: {mpa_level.shape}")
